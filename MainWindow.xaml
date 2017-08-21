@@ -14,14 +14,18 @@
 
 		<StackPanel Orientation="Horizontal" >
 			<TextBlock Text="Video source:" VerticalAlignment="Center" Margin="3"/>
-			<ComboBox x:Name="cbCaptureDeviceList" Width="150" VerticalAlignment="Center" Margin="3" ItemsSource="{Binding DeviceList, ElementName=player, Mode=OneWay}" />
+			<ComboBox x:Name="cbCaptureDeviceList" Width="150" VerticalAlignment="Center" Margin="3" ItemsSource="{Binding DeviceList, ElementName=player, Mode=OneWay}" Loaded="cbCaptureDeviceList_Loaded" />
 			<Button x:Name="bStart" Content="Start" VerticalAlignment="Center" Margin="3" Click="bStart_Click"/>
 			<Button x:Name="bStop" Content="Stop" VerticalAlignment="Center" Margin="3" Click="bStop_Click"/>
 			<TextBlock Text="Framerate:" VerticalAlignment="Center" Margin="3"/>
-			<TextBlock Text="{Binding Framerate, ElementName=player}" VerticalAlignment="Center" Margin="3"/>
+			<TextBlock Text="{Binding FrameRate, ElementName=player}" VerticalAlignment="Center" Margin="3"/>
+			<TextBlock Text="Resolution:" VerticalAlignment="Center" Margin="3"/>
+			<TextBlock Text="{Binding BitmapWidth, ElementName=player}" VerticalAlignment="Center" Margin="3"/>
+			<TextBlock Text="x" VerticalAlignment="Center" />
+			<TextBlock Text="{Binding BitmapHeight, ElementName=player}" VerticalAlignment="Center" Margin="3"/>
 			<CheckBox Content="Flip horizontal" VerticalAlignment="Center" Margin="3" IsChecked="{Binding FlipHorizontal, ElementName=player}"/>
 			<CheckBox Content="Flip vertical" VerticalAlignment="Center" Margin="3" IsChecked="{Binding FlipVertical, ElementName=player}" />
 		</StackPanel>
-		<l:CapPlayer Grid.Row="1" x:Name="player" RenderTransformOrigin="0.5,0.5"/>
+		<l:CapViewer Grid.Row="1" x:Name="player" RenderTransformOrigin="0.5,0.5"/>
 	</Grid>
 </Window>

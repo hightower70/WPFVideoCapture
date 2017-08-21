@@ -63,10 +63,9 @@
       <SubType>Code</SubType>
     </Compile>
     <Compile Include="VideoCapture\CapDevice.cs" />
-    <Compile Include="VideoCapture\CapGrabber.cs" />
     <Compile Include="VideoCapture\CapHelper.cs" />
     <Compile Include="VideoCapture\CapInterfaces.cs" />
-    <Compile Include="VideoCapture\CapPlayer.cs" />
+    <Compile Include="VideoCapture\CapViewer.cs" />
     <Compile Include="VideoCapture\CapStructures.cs" />
     <Compile Include="VideoCapture\CapUUIDs.cs" />
     <Compile Include="VideoCapture\FilterInfo.cs" />

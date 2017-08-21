@@ -9,19 +9,28 @@ using System.Windows.Media;
 
 namespace VideoCapture
 {
+	internal class BitmapFormatChangedEventArgs : EventArgs
+	{
+		public IntPtr Bitmap { set; get; }
+	}
+
 	internal class CapDevice : DependencyObject, IDisposable
 	{
+		#region · Data members · 
+		private ManualResetEvent m_thread_stop_request;
+		private ManualResetEvent m_thread_stopped;
+		private Thread m_worker_thread;
+		private IGraphBuilder m_filter_graph;
+		private ISampleGrabber m_sample_grabber;
+		private IBaseFilter m_capture_filter, m_grabber_filter;
+		private IMediaControl m_media_control;
+		private string m_device_moniker;
+		private IntPtr m_bitmap;
+		private IntPtr m_section;
+		private ISampleGrabberCB m_sample_processor;
+		#endregion
 
-		ManualResetEvent stopSignal;
-		Thread worker;
-		IGraphBuilder m_filter_graph;
-		ISampleGrabber grabber;
-		IBaseFilter m_capture_filter, m_grabber_filter;
-		IMediaControl control;
-		CapGrabber capGrabber;
-		static string deviceMoniker;
-		IntPtr map;
-		IntPtr section;
+		#region  · Properties ·
 
 		public InteropBitmap BitmapSource
 		{
@@ -34,42 +43,53 @@ namespace VideoCapture
 		public static readonly DependencyProperty BitmapSourceProperty = BitmapSourcePropertyKey.DependencyProperty;
 
 
-
-		public float Framerate
+		public ISampleGrabberCB SampleProcessor
 		{
-			get { return (float)GetValue(FramerateProperty); }
-			set { SetValue(FramerateProperty, value); }
+			get { return m_sample_processor; }
+			set { m_sample_processor = value; }
 		}
-		public static readonly DependencyProperty FramerateProperty =
-				DependencyProperty.Register("Framerate", typeof(float), typeof(CapDevice), new UIPropertyMetadata(default(float)));
 
+		#endregion
 
+		#region · Events ·
+		public event EventHandler<BitmapFormatChangedEventArgs> OnBitmapFormatChanged;
+		#endregion
 
+		#region · Constructor ·
 
 		public CapDevice()
 		{
-			deviceMoniker = GetDeviceList[0].MonikerString;
-			//Start();
+			m_device_moniker = string.Empty;
 		}
 
 		public CapDevice(string moniker)
 		{
-			deviceMoniker = moniker;
+			m_device_moniker = moniker;
+		}
+		#endregion
 
-			//Start();
+		#region · Public functions ·
+
+		/// <summary>
+		/// Sets input device for grabbing
+		/// </summary>
+		/// <param name="in_moniker">Device moniker of the input device</param>
+		public void SetInputDeivice(string in_moniker)
+		{
+			m_device_moniker = in_moniker;
 		}
 
+		/// <summary>
+		/// Starts video grabbing
+		/// </summary>
 		public void Start()
 		{
-			if (worker == null)
+			if (m_worker_thread == null)
 			{
-				capGrabber = new CapGrabber();
-				capGrabber.PropertyChanged += new System.ComponentModel.PropertyChangedEventHandler(capGrabber_PropertyChanged);
-				capGrabber.NewFrameArrived += new EventHandler(capGrabber_NewFrameArrived);
-
-				stopSignal = new ManualResetEvent(false);
-				worker = new Thread(RunWorker);
-				worker.Start();
+				m_thread_stop_request = new ManualResetEvent(false);
+				m_thread_stopped = new ManualResetEvent(false);
+				m_worker_thread = new Thread(RunWorker);
+				m_worker_thread.Start();
 			}
 			else
 			{
@@ -78,117 +98,38 @@ namespace VideoCapture
 			}
 		}
 
-		void capGrabber_NewFrameArrived(object sender, EventArgs e)
-		{
-			if (this.Dispatcher != null)
-			{
-				this.Dispatcher.Invoke(System.Windows.Threading.DispatcherPriority.Render, (SendOrPostCallback)delegate
-				{
-					if (BitmapSource != null)
-					{
-						BitmapSource.Invalidate();
-						UpdateFramerate();
-					}
-				}, null);
-			}
-		}
-
 		/// <summary>
-		/// The event handler for the <see cref="OnVideoControlFlagsChanged"/> event.
-		/// Updates the video capture device with new video control properties.
+		/// Stops video grabbing
 		/// </summary>
-		/// <remarks> This method has been disabled, because it was easier to flip the incoming image
-		/// with the CV image flip in ImageProcessing.cs.
-		/// The direct show flipping didn't work with some webcams, e.g. the PlayStationEye3 cam or an HP Laptop Webcam</remarks>
-		/// <param name="property">The <see cref="VideoControlFlags"/> to be changed</param>
-		/// <param name="value">The new value for the property</param>
-		private void FlipImage()
-		{
-			if (m_filter_graph == null)
-				return;
-
-			if (m_capture_filter == null)
-				return;
-			/*
-			IAMVideoControl videoControl = (IAMCameraControl)m_capture_filter;
-			VideoControlFlags pCapsFlags;
-
-			IPin pPin = CapHelper.ByCategory(m_capture_filter, PinCategory.Capture, 0);
-			int hr = m_capture_filter.GetCaps(pPin, out pCapsFlags);
-
-			if (hr != 0)
-				return;
-
-			hr = videoControl.GetMode(pPin, out pCapsFlags);
-
-			if (hr != 0)
-				return;
-
-			pCapsFlags |= VideoControlFlags.FlipVertical;
-
-			hr = videoControl.SetMode(pPin, pCapsFlags);
-
-			if (hr != 0)
-				return;*/
-		}
-
-		void capGrabber_PropertyChanged(object sender, System.ComponentModel.PropertyChangedEventArgs e)
-		{
-			this.Dispatcher.Invoke(System.Windows.Threading.DispatcherPriority.DataBind, (SendOrPostCallback)delegate
-			{
-				if (capGrabber.Width != default(int) && capGrabber.Height != default(int))
-				{
-					uint pcount = (uint)(capGrabber.Width * capGrabber.Height * PixelFormats.Bgr32.BitsPerPixel / 8);
-					section = CreateFileMapping(new IntPtr(-1), IntPtr.Zero, 0x04, 0, pcount, null);
-					map = MapViewOfFile(section, 0xF001F, 0, 0, pcount);
-					BitmapSource = System.Windows.Interop.Imaging.CreateBitmapSourceFromMemorySection(section, capGrabber.Width, capGrabber.Height, PixelFormats.Bgr32,
-										capGrabber.Width * PixelFormats.Bgr32.BitsPerPixel / 8, 0) as InteropBitmap;
-					capGrabber.Map = map;
-					FlipImage();
-					if (OnNewBitmapReady != null)
-						OnNewBitmapReady(this, null);
-				}
-			}, null);
-		}
-
-		void UpdateFramerate()
-		{
-			frames++;
-			if (timer.ElapsedMilliseconds >= 1000)
-			{
-				Framerate = (float)Math.Round(frames * 1000 / timer.ElapsedMilliseconds);
-				timer.Reset();
-				timer.Start();
-				frames = 0;
-			}
-
-		}
-
-
-		System.Diagnostics.Stopwatch timer = System.Diagnostics.Stopwatch.StartNew();
-		double frames;
-
 		public void Stop()
 		{
 			if (IsRunning)
 			{
-				stopSignal.Set();
-				worker.Abort();
-				if (worker != null)
+				// set stop request
+				m_thread_stop_request.Set();
+
+				// wait for thread stopped
+				if(!m_thread_stopped.WaitOne(1000))
 				{
-					worker.Join();
-					Release();
+					// force thread exit
+					m_worker_thread.Abort();
 				}
+
+				// release resources
+				Release();
 			}
 		}
 
+		/// <summary>
+		/// Checks if video grabbing is active (returns true if active)
+		/// </summary>
 		public bool IsRunning
 		{
 			get
 			{
-				if (worker != null)
+				if (m_worker_thread != null)
 				{
-					if (worker.Join(0) == false)
+					if (m_worker_thread.Join(0) == false)
 						return true;
 
 					Release();
@@ -196,15 +137,10 @@ namespace VideoCapture
 				return false;
 			}
 		}
-
-		void Release()
-		{
-			worker = null;
-
-			stopSignal.Close();
-			stopSignal = null;
-		}
-
+		
+		/// <summary>
+		/// Gets available video capture device list
+		/// </summary>
 		public static FilterInfo[] GetDeviceList
 		{
 			get
@@ -233,17 +169,62 @@ namespace VideoCapture
 			}
 		}
 
-		void RunWorker()
+		#endregion
+
+		#region · Private functions ·
+
+		/// <summary>
+		/// Changes the current video stream resolution
+		/// </summary>
+		/// <param name="in_width">New width in pixels</param>
+		/// <param name="in_height">New height in pixels</param>
+		private void ChangeBitmapFormat(int in_width, int in_height)
+		{
+			this.Dispatcher.Invoke(System.Windows.Threading.DispatcherPriority.DataBind, (SendOrPostCallback)delegate
+			{
+				if (in_width != default(int) && in_height != default(int))
+				{
+					uint pcount = (uint)(in_width * in_height * PixelFormats.Bgr32.BitsPerPixel / 8);
+					m_section = CreateFileMapping(new IntPtr(-1), IntPtr.Zero, 0x04, 0, pcount, null);
+					m_bitmap = MapViewOfFile(m_section, 0xF001F, 0, 0, pcount);
+					BitmapSource = System.Windows.Interop.Imaging.CreateBitmapSourceFromMemorySection(m_section, in_width, in_height, PixelFormats.Bgr32,
+										in_width * PixelFormats.Bgr32.BitsPerPixel / 8, 0) as InteropBitmap;
+
+					BitmapFormatChangedEventArgs event_arg = new BitmapFormatChangedEventArgs();
+					event_arg.Bitmap = m_bitmap;
+
+					if (OnBitmapFormatChanged != null)
+						OnBitmapFormatChanged(this, event_arg);
+				}
+			}, null);
+		}
+
+		/// <summary>
+		/// Releases resources
+		/// </summary>
+		void Release()
+		{
+			m_worker_thread = null;
+
+			m_thread_stopped.Close();
+			m_thread_stopped = null;
+			m_thread_stop_request.Close();
+			m_thread_stop_request = null;
+		}
+
+		/// <summary>
+		/// Main thread
+		/// </summary>
+		private void RunWorker()
 		{
 			try
 			{
-
 				m_filter_graph = new FilterGraph() as IGraphBuilder;
 
-				m_capture_filter = FilterInfo.CreateFilter(deviceMoniker);
+				m_capture_filter = FilterInfo.CreateFilter(m_device_moniker);
 
-				grabber = new SampleGrabber() as ISampleGrabber;
-				m_grabber_filter = grabber as IBaseFilter;
+				m_sample_grabber = new SampleGrabber() as ISampleGrabber;
+				m_grabber_filter = m_sample_grabber as IBaseFilter;
 
 				m_filter_graph.AddFilter(m_capture_filter, "Video Source");
 				m_filter_graph.AddFilter(m_grabber_filter, "grabber");
@@ -253,35 +234,37 @@ namespace VideoCapture
 					mediaType.MajorType = MediaTypes.Video;
 					mediaType.SubType = MediaSubTypes.RGB32;
 
-					grabber.SetMediaType(mediaType);
+					m_sample_grabber.SetMediaType(mediaType);
 
 					if (m_filter_graph.Connect(m_capture_filter.GetPinByDirection(PinDirection.Output, 0), m_grabber_filter.GetPinByDirection(PinDirection.Input, 0)) >= 0)
 					{
-						if (grabber.GetConnectedMediaType(mediaType) == 0)
+						if (m_sample_grabber.GetConnectedMediaType(mediaType) == 0)
 						{
 							VideoInfoHeader header = (VideoInfoHeader)Marshal.PtrToStructure(mediaType.FormatPtr, typeof(VideoInfoHeader));
-							capGrabber.Width = header.BmiHeader.Width;
-							capGrabber.Height = header.BmiHeader.Height;
+							ChangeBitmapFormat(header.BmiHeader.Width, header.BmiHeader.Height);
 						}
 					}
+
 					m_filter_graph.Render(m_grabber_filter.GetPinByDirection(PinDirection.Output, 0));
-					grabber.SetBufferSamples(false);
-					grabber.SetOneShot(false);
-					grabber.SetCallback(capGrabber, 1);
+					m_sample_grabber.SetBufferSamples(false);
+					m_sample_grabber.SetOneShot(false);
+					m_sample_grabber.SetCallback(m_sample_processor, 1);
 
 					IVideoWindow wnd = (IVideoWindow)m_filter_graph;
 					wnd.put_AutoShow(false);
 					wnd = null;
 
-					control = (IMediaControl)m_filter_graph;
-					control.Run();
+					// start capturing
+					m_media_control = (IMediaControl)m_filter_graph;
+					m_media_control.Run();
 
-					while (!stopSignal.WaitOne(0, true))
+					// wait for end request
+					while (!m_thread_stop_request.WaitOne(100))
 					{
-						Thread.Sleep(10);
 					}
 
-					control.StopWhenReady();
+					// stop capturing
+					m_media_control.Stop();
 				}
 			}
 			catch (Exception ex)
@@ -293,31 +276,33 @@ namespace VideoCapture
 				m_filter_graph = null;
 				m_capture_filter = null;
 				m_grabber_filter = null;
-				grabber = null;
-				capGrabber = null;
-				control = null;
+				m_sample_grabber = null;
+				m_media_control = null;
 
+				// thread is finished
+				if(m_thread_stopped != null)
+					m_thread_stopped.Set();
 			}
-
 		}
 
+		#endregion
 
-
+		#region · DLL Import ·
 		[DllImport("kernel32.dll", SetLastError = true)]
 		static extern IntPtr CreateFileMapping(IntPtr hFile, IntPtr lpFileMappingAttributes, uint flProtect, uint dwMaximumSizeHigh, uint dwMaximumSizeLow, string lpName);
 
 		[DllImport("kernel32.dll", SetLastError = true)]
 		static extern IntPtr MapViewOfFile(IntPtr hFileMappingObject, uint dwDesiredAccess, uint dwFileOffsetHigh, uint dwFileOffsetLow, uint dwNumberOfBytesToMap);
 
-		public event EventHandler OnNewBitmapReady;
+		#endregion
 
-#region IDisposable Members
+		#region IDisposable Members
 
 		public void Dispose()
 		{
 			Stop();
 		}
 
-#endregion
+		#endregion
 	}
 }

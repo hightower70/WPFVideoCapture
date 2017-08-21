@@ -23,7 +23,6 @@ namespace VideoCapture
 		public MainWindow()
 		{
 			InitializeComponent();
-
 		}
 
 		private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
@@ -33,12 +32,19 @@ namespace VideoCapture
 
 		private void bStart_Click(object sender, RoutedEventArgs e)
 		{
+			player.SelectDevice(((FilterInfo)cbCaptureDeviceList.SelectedItem).MonikerString);
 			player.Start();
 		}
 
 		private void bStop_Click(object sender, RoutedEventArgs e)
 		{
-			player.Start();
+			player.Stop();
+		}
+
+		private void cbCaptureDeviceList_Loaded(object sender, RoutedEventArgs e)
+		{
+			if (cbCaptureDeviceList.Items.Count > 0)
+				cbCaptureDeviceList.SelectedIndex = 0;
 		}
 	}
 }
